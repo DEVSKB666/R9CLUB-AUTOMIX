@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+dist/
+release/
+electron-dist/
+ui-*.png
+*.log
+electron/native/*.exe
+native/**/target/
+native/**/bin/
+native/**/obj/
+native/**/publish/

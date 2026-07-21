@@ -1,0 +1,63 @@
+{
+  "name": "r9club-automix",
+  "version": "0.7.0",
+  "type": "module",
+  "description": "R9CLUB AUTOMIX - intelligent anchor-aligned audio arrangement for Windows",
+  "main": "electron/main.cjs",
+  "author": "R9CLUB",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "build:native": "cargo build --manifest-path native/wasapi-player/Cargo.toml --release --offline && dotnet publish native/asio-player/R9Club.AsioPlayer.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o native/asio-player/publish && powershell -NoProfile -Command \"New-Item -ItemType Directory -Force electron/native | Out-Null; Copy-Item native/wasapi-player/target/release/r9club-wasapi-player.exe electron/native/wasapi-player.exe -Force; Copy-Item native/asio-player/publish/r9club-asio-player.exe electron/native/asio-player.exe -Force\"",
+    "dist": "npm run build:native && npm run build && electron-builder --win nsis",
+    "test": "vitest run",
+    "smoke:audio": "node scripts/smoke-audio.cjs",
+    "smoke:native": "node scripts/smoke-native-audio.cjs"
+  },
+  "dependencies": {
+    "@fontsource/prompt": "^5.3.0",
+    "@vitejs/plugin-react": "latest",
+    "ffmpeg-static": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "vitest": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "com.r9club.automix",
+    "productName": "R9CLUB AUTOMIX",
+    "electronDist": "electron-dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "electron/native/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "artifactName": "R9CLUB-AUTOMIX-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

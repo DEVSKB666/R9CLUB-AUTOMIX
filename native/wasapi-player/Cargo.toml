@@ -1,0 +1,20 @@
+[package]
+name = "r9club-wasapi-player"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+windows = { version = "0.61.3", features = [
+  "Win32_Media_Audio",
+  "Win32_Media_KernelStreaming",
+  "Win32_Media_Multimedia",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+] }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
