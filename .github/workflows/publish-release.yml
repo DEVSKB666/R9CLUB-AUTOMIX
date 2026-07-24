@@ -1,0 +1,38 @@
+name: Publish Existing Release Assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Workflow run ID containing the built artifacts
+        required: true
+        type: string
+      tag:
+        description: Git tag to publish
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.run_id }}
+          pattern: r9club-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --generate-notes --title "R9CLUB AUTOMIX $RELEASE_TAG"
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
