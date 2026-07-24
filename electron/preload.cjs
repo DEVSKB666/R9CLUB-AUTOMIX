@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('beatBlend', {
+  platform: process.platform,
   chooseAudio: () => ipcRenderer.invoke('audio:choose'),
   analyzeSilence: (path, threshold, duration) =>
     ipcRenderer.invoke('audio:analyze-silence', { path, threshold, duration }),

@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { estimatePcmBytes, parseRenderVerification } = require('../electron/audio-engine.cjs');
+const { estimateExportBytes, estimatePcmBytes, getExportProfile, parseRenderVerification } = require('../electron/audio-engine.cjs');
 
 describe('lossless render safeguards', () => {
   it('estimates stereo 32-bit float PCM storage including the WAV header', () => {
@@ -27,5 +27,27 @@ describe('lossless render safeguards', () => {
     expect(result.passed).toBe(false);
     expect(result.checks.codec).toBe(false);
     expect(result.checks.sampleRate).toBe(false);
+  });
+
+  it('creates lossless WAV and FLAC export profiles without bitrate encoding', () => {
+    const wav = getExportProfile({ format: 'wav' }, 96000);
+    const flac = getExportProfile({ format: 'flac' }, 96000);
+    expect(wav.lossless).toBe(true);
+    expect(wav.codecArgs).toContain('pcm_f32le');
+    expect(wav.sampleRate).toBe(96000);
+    expect(flac.lossless).toBe(true);
+    expect(flac.codecArgs).toContain('flac');
+    expect(flac.sampleRate).toBe(96000);
+  });
+
+  it('uses an allowed MP3 bitrate and verifies the encoded bitrate', () => {
+    const profile = getExportProfile({ format: 'mp3', bitrateKbps: 320 }, 96000);
+    expect(profile.lossless).toBe(false);
+    expect(profile.sampleRate).toBe(48000);
+    expect(estimateExportBytes(60, profile)).toBeGreaterThan(2_400_000);
+    const output = 'Duration: 00:01:00.00\nStream #0:0: Audio: mp3, 48000 Hz, stereo, fltp, 320 kb/s';
+    const result = parseRenderVerification(output, { codecs: profile.expectedCodecs, bitrateKbps: 320, sampleRate: 48000, channels: 2, duration: 60 });
+    expect(result.passed).toBe(true);
+    expect(result.bitrateKbps).toBe(320);
   });
 });

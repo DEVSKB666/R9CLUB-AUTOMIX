@@ -41,6 +41,69 @@ function estimatePcmBytes(duration, sampleRate, channels = 2, bytesPerSample = 4
   return Math.ceil(safeDuration * safeRate) * safeChannels * safeBytesPerSample + 114;
 }
 
+const supportedMp3Bitrates = new Set([128, 192, 256, 320]);
+
+function mp3SampleRateFor(sourceSampleRate) {
+  const rate = Math.max(44100, Math.round(Number(sourceSampleRate) || 48000));
+  if (rate <= 48000) return rate === 44100 ? 44100 : 48000;
+  return rate % 44100 === 0 ? 44100 : 48000;
+}
+
+function getExportProfile(options = {}, sourceSampleRate = 48000) {
+  const requestedFormat = String(options.format || 'wav').toLowerCase();
+  const format = ['wav', 'flac', 'mp3'].includes(requestedFormat) ? requestedFormat : 'wav';
+  const requestedBitrate = Math.round(Number(options.bitrateKbps) || 320);
+  const bitrateKbps = supportedMp3Bitrates.has(requestedBitrate) ? requestedBitrate : 320;
+  const masterSampleRate = Math.max(44100, Math.round(Number(sourceSampleRate) || 48000));
+
+  if (format === 'flac') {
+    return {
+      format,
+      extension: 'flac',
+      dialogName: 'FLAC 24-bit Lossless',
+      quality: '24-bit PCM · Lossless Compression',
+      lossless: true,
+      sampleRate: masterSampleRate,
+      expectedCodecs: ['flac'],
+      codecArgs: ['-c:a', 'flac', '-sample_fmt', 's32', '-bits_per_raw_sample', '24', '-compression_level', '12'],
+    };
+  }
+  if (format === 'mp3') {
+    return {
+      format,
+      extension: 'mp3',
+      dialogName: `MP3 ${bitrateKbps} kbps`,
+      quality: `${bitrateKbps} kbps CBR · Lossy`,
+      lossless: false,
+      bitrateKbps,
+      sampleRate: mp3SampleRateFor(masterSampleRate),
+      expectedCodecs: ['mp3', 'mp3float', 'mp3fixed'],
+      codecArgs: ['-c:a', 'libmp3lame', '-b:a', `${bitrateKbps}k`],
+    };
+  }
+  return {
+    format: 'wav',
+    extension: 'wav',
+    dialogName: 'WAV 32-bit Float Master',
+    quality: '32-bit Float PCM · Lossless Master',
+    lossless: true,
+    sampleRate: masterSampleRate,
+    expectedCodecs: ['pcm_f32le'],
+    codecArgs: ['-c:a', 'pcm_f32le', '-rf64', 'auto'],
+  };
+}
+
+function estimateExportBytes(duration, profile) {
+  if (profile.format === 'mp3') {
+    return Math.ceil(Math.max(0, Number(duration) || 0) * profile.bitrateKbps * 1000 / 8) + 128 * 1024;
+  }
+  if (profile.format === 'flac') {
+    // Use an uncompressed 24-bit ceiling so the disk-space guard remains conservative.
+    return estimatePcmBytes(duration, profile.sampleRate, 2, 3) + 128 * 1024;
+  }
+  return estimatePcmBytes(duration, profile.sampleRate);
+}
+
 function parseRenderVerification(output, expected = {}) {
   const durationMatch = output.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
   const duration = durationMatch
@@ -57,12 +120,15 @@ function parseRenderVerification(output, expected = {}) {
   const peakDb = peakText?.toLowerCase() === '-inf' ? -Infinity : Number(peakText);
   const expectedDuration = Number(expected.duration) || 0;
   const durationDelta = expectedDuration ? Math.abs(duration - expectedDuration) : 0;
+  const bitrateKbps = Number(streamLine.match(/(\d+)\s*kb\/s/i)?.[1] || 0);
+  const expectedCodecs = expected.codecs || [expected.codec || 'pcm_f32le'];
   const checks = {
-    codec: codec === (expected.codec || 'pcm_f32le'),
+    codec: expectedCodecs.includes(codec),
     sampleRate: sampleRate === (Number(expected.sampleRate) || sampleRate),
     channels: channels === (Number(expected.channels) || 2),
     duration: duration > 0 && (!expectedDuration || durationDelta <= Math.max(0.08, expectedDuration * 0.0001)),
   };
+  if (expected.bitrateKbps) checks.bitrate = Math.abs(bitrateKbps - Number(expected.bitrateKbps)) <= 8;
   return {
     passed: Object.values(checks).every(Boolean),
     codec,
@@ -73,8 +139,9 @@ function parseRenderVerification(output, expected = {}) {
     durationDelta,
     sampleCount: Math.round(duration * sampleRate),
     peakDb: Number.isNaN(peakDb) ? null : peakDb,
+    bitrateKbps,
     checks,
   };
 }
 
-module.exports = { buildFilter, estimatePcmBytes, parseRenderVerification, parseSilenceOutput };
+module.exports = { buildFilter, estimateExportBytes, estimatePcmBytes, getExportProfile, parseRenderVerification, parseSilenceOutput };

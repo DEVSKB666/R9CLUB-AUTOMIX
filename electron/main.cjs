@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const ffmpegPath = require('ffmpeg-static');
-const { buildFilter, estimatePcmBytes, parseRenderVerification, parseSilenceOutput } = require('./audio-engine.cjs');
+const { buildFilter, estimateExportBytes, getExportProfile, parseRenderVerification, parseSilenceOutput } = require('./audio-engine.cjs');
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -64,6 +64,9 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
 app.on('before-quit', stopExclusivePlayback);
 
 ipcMain.handle('audio:choose', async () => {
@@ -112,6 +115,12 @@ function lastJsonLine(text, predicate = () => true) {
 }
 
 async function getAudioCapabilities(sampleRate = 48000, requestedAsioDriver = '') {
+  if (process.platform !== 'win32') {
+    return {
+      wasapi: { available: false, sampleRate, error: 'WASAPI Exclusive ใช้ได้เฉพาะ Windows' },
+      asio: { available: false, drivers: [], driver: '', sampleRate, error: 'ASIO ใช้ได้เฉพาะ Windows' },
+    };
+  }
   const probe = await runCommand(getWasapiPlayerPath(), ['--probe', '--rate', String(sampleRate)]);
   let wasapi = { available: false, sampleRate, error: 'WASAPI Exclusive is unavailable' };
   if (probe.code === 0) {
@@ -224,29 +233,34 @@ ipcMain.handle('audio:asio-start', async (_event, { tracks, from = 0, loopRange 
   return { ...capabilities.asio, ...started };
 });
 
-ipcMain.handle('audio:export', async (_event, { tracks }) => {
+ipcMain.handle('audio:export', async (_event, { tracks, options = {} }) => {
   if (!tracks?.length) throw new Error('ไม่มีเพลงสำหรับ Export');
-  const safeFormat = 'wav';
+  if (tracks.some((track) => !track.path || !track.duration)) throw new Error('มีไฟล์เสียงที่ยังอ่านไม่สำเร็จ กรุณาตรวจรายการเพลงก่อน Export');
+  const sourceSampleRate = Math.max(44100, ...tracks.map((track) => track.sampleRate || 0));
+  const profile = getExportProfile(options, sourceSampleRate);
   const result = await dialog.showSaveDialog(mainWindow, {
     title: 'Export Mix',
-    defaultPath: `R9CLUB Lossless Master.${safeFormat}`,
-    filters: [{ name: 'WAV 32-bit Float Master', extensions: [safeFormat] }],
+    defaultPath: `R9CLUB ${profile.lossless ? 'Lossless Master' : 'Listening Copy'}.${profile.extension}`,
+    filters: [{ name: profile.dialogName, extensions: [profile.extension] }],
   });
   if (result.canceled) return { canceled: true };
+  const selectedExtension = path.extname(result.filePath).toLowerCase();
+  const outputPath = selectedExtension === `.${profile.extension}`
+    ? result.filePath
+    : path.join(path.dirname(result.filePath), `${path.basename(result.filePath, selectedExtension)}.${profile.extension}`);
 
   const inputs = tracks.flatMap((track) => ['-i', track.path]);
-  const { filter, output, duration, sampleRate } = buildFilter(tracks);
-  const codec = ['-c:a', 'pcm_f32le', '-rf64', 'auto'];
-  const quality = '32-bit Float PCM';
-  const estimatedBytes = estimatePcmBytes(duration, sampleRate);
-  const destinationStats = await fs.statfs(path.dirname(result.filePath));
+  const { filter, output, duration, sampleRate } = buildFilter(tracks, { sampleRate: profile.sampleRate });
+  const estimatedBytes = estimateExportBytes(duration, profile);
+  const destinationStats = await fs.statfs(path.dirname(outputPath));
   const freeBytes = Number(destinationStats.bavail) * Number(destinationStats.bsize);
   const requiredBytes = Math.ceil(estimatedBytes * 1.05) + 32 * 1024 * 1024;
   if (freeBytes < requiredBytes) {
-    throw new Error(`พื้นที่ว่างไม่พอสำหรับ WAV Master: ต้องใช้ประมาณ ${Math.ceil(requiredBytes / 1048576)} MB แต่เหลือ ${Math.floor(freeBytes / 1048576)} MB`);
+    throw new Error(`พื้นที่ว่างไม่พอสำหรับไฟล์ ${profile.format.toUpperCase()}: ต้องใช้ประมาณ ${Math.ceil(requiredBytes / 1048576)} MB แต่เหลือ ${Math.floor(freeBytes / 1048576)} MB`);
   }
-  const args = ['-y', ...inputs, '-filter_complex', filter, '-map', output, ...codec, '-ar', String(sampleRate), result.filePath];
-  mainWindow.webContents.send('audio:export-state', { phase: 'preparing', filePath: result.filePath, format: safeFormat, quality, sampleRate, duration, estimatedBytes, freeBytes });
+  const args = ['-y', ...inputs, '-filter_complex', filter, '-map', output, ...profile.codecArgs, '-ar', String(sampleRate), outputPath];
+  const exportState = { filePath: outputPath, format: profile.format, quality: profile.quality, lossless: profile.lossless, bitrateKbps: profile.bitrateKbps || null, sampleRate, duration, estimatedBytes, freeBytes };
+  mainWindow.webContents.send('audio:export-state', { phase: 'preparing', ...exportState });
 
   return new Promise((resolve, reject) => {
     exportCanceled = false;
@@ -266,22 +280,22 @@ ipcMain.handle('audio:export', async (_event, { tracks }) => {
       exportProcess = null;
       if (code === 0) {
         mainWindow.webContents.send('audio:export-progress', 100);
-        mainWindow.webContents.send('audio:export-state', { phase: 'verifying', filePath: result.filePath, format: safeFormat, quality, sampleRate, duration, estimatedBytes, freeBytes });
+        mainWindow.webContents.send('audio:export-state', { phase: 'verifying', ...exportState });
         try {
           const verificationOutput = await runFfmpeg([
-            '-hide_banner', '-i', result.filePath, '-af', 'astats=metadata=1:reset=0', '-f', 'null', '-',
+            '-hide_banner', '-i', outputPath, '-af', 'astats=metadata=1:reset=0', '-f', 'null', '-',
           ]);
-          const fileStats = await fs.stat(result.filePath);
+          const fileStats = await fs.stat(outputPath);
           const verification = {
-            ...parseRenderVerification(verificationOutput, { codec: 'pcm_f32le', sampleRate, channels: 2, duration }),
+            ...parseRenderVerification(verificationOutput, { codecs: profile.expectedCodecs, bitrateKbps: profile.bitrateKbps, sampleRate, channels: 2, duration }),
             fileBytes: fileStats.size,
           };
-          mainWindow.webContents.send('audio:export-state', { phase: verification.passed ? 'complete' : 'verification-failed', filePath: result.filePath, format: safeFormat, quality, sampleRate, duration, estimatedBytes, freeBytes, verification });
-          resolve({ canceled: false, filePath: result.filePath, verification });
+          mainWindow.webContents.send('audio:export-state', { phase: verification.passed ? 'complete' : 'verification-failed', ...exportState, verification });
+          resolve({ canceled: false, filePath: outputPath, verification });
         } catch (error) {
           const verification = { passed: false, error: error.message };
-          mainWindow.webContents.send('audio:export-state', { phase: 'verification-failed', filePath: result.filePath, format: safeFormat, quality, sampleRate, duration, estimatedBytes, freeBytes, verification });
-          resolve({ canceled: false, filePath: result.filePath, verification });
+          mainWindow.webContents.send('audio:export-state', { phase: 'verification-failed', ...exportState, verification });
+          resolve({ canceled: false, filePath: outputPath, verification });
         }
       } else if (exportCanceled || code === null) { mainWindow.webContents.send('audio:export-state', { phase: 'canceled' }); resolve({ canceled: true }); }
       else { const message = stderr.slice(-1200); mainWindow.webContents.send('audio:export-state', { phase: 'error', error: message }); reject(new Error(message)); }

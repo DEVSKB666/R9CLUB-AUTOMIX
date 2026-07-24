@@ -2,7 +2,7 @@
   "name": "r9club-automix",
   "version": "0.7.0",
   "type": "module",
-  "description": "R9CLUB AUTOMIX - intelligent anchor-aligned audio arrangement for Windows",
+  "description": "R9CLUB AUTOMIX - intelligent anchor-aligned audio arrangement for Windows and macOS",
   "main": "electron/main.cjs",
   "author": "R9CLUB",
   "license": "MIT",
@@ -10,8 +10,12 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "dev:web": "vite --host 127.0.0.1",
     "build": "vite build",
-    "build:native": "cargo build --manifest-path native/wasapi-player/Cargo.toml --release --offline && dotnet publish native/asio-player/R9Club.AsioPlayer.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o native/asio-player/publish && powershell -NoProfile -Command \"New-Item -ItemType Directory -Force electron/native | Out-Null; Copy-Item native/wasapi-player/target/release/r9club-wasapi-player.exe electron/native/wasapi-player.exe -Force; Copy-Item native/asio-player/publish/r9club-asio-player.exe electron/native/asio-player.exe -Force\"",
-    "dist": "npm run build:native && npm run build && electron-builder --win nsis",
+    "build:icons": "node scripts/make-mac-icon.cjs",
+    "build:native": "npm run build:native:win",
+    "build:native:win": "cargo build --manifest-path native/wasapi-player/Cargo.toml --locked --release && dotnet publish native/asio-player/R9Club.AsioPlayer.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o native/asio-player/publish && powershell -NoProfile -Command \"New-Item -ItemType Directory -Force electron/native | Out-Null; Copy-Item native/wasapi-player/target/release/r9club-wasapi-player.exe electron/native/wasapi-player.exe -Force; Copy-Item native/asio-player/publish/r9club-asio-player.exe electron/native/asio-player.exe -Force\"",
+    "dist": "node scripts/build-release.cjs",
+    "dist:win": "npm run build:native:win && npm run build && electron-builder --win nsis --x64 --publish never",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never",
     "test": "vitest run",
     "smoke:audio": "node scripts/smoke-audio.cjs",
     "smoke:native": "node scripts/smoke-native-audio.cjs"
@@ -29,15 +33,16 @@
     "concurrently": "latest",
     "electron": "latest",
     "electron-builder": "latest",
+    "png2icons": "^2.0.1",
     "vitest": "latest",
     "wait-on": "latest"
   },
   "build": {
     "appId": "com.r9club.automix",
     "productName": "R9CLUB AUTOMIX",
-    "electronDist": "electron-dist",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -52,6 +57,20 @@
       "target": "nsis",
       "icon": "build/icon.ico",
       "artifactName": "R9CLUB-AUTOMIX-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.music",
+      "icon": "build/icon.icns",
+      "minimumSystemVersion": "12.0",
+      "artifactName": "R9CLUB-AUTOMIX-${version}-mac-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "R9CLUB AUTOMIX ${version}",
+      "artifactName": "R9CLUB-AUTOMIX-${version}-mac-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
