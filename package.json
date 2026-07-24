@@ -1,6 +1,6 @@
 {
   "name": "r9club-automix",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "type": "module",
   "description": "R9CLUB AUTOMIX - intelligent anchor-aligned audio arrangement for Windows and macOS",
   "main": "electron/main.cjs",
