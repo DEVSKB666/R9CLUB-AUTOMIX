@@ -28,12 +28,17 @@ WAV เป็นค่าเริ่มต้นและรักษาคุ�
 - **Autosave / Recovery** โปรแกรม Windows บันทึกงานเบื้องหลังและเสนอการกู้คืนเมื่อเปิดครั้งถัดไป
 - **Disk Space Guard** คำนวณขนาด WAV และตรวจพื้นที่ไดรฟ์ปลายทางก่อนเริ่ม Render
 - **Post-render Verification** เปิดอ่าน Master ที่สร้างเสร็จเพื่อตรวจ codec, sample rate, channel, duration, peak, sample count และขนาดไฟล์จริง
+- **Music DNA Analysis** ตรวจ BPM แบบหลาย onset band, แสดง half/double-tempo candidates และ confidence
+- **Key / Camelot / Tuning** ตรวจ 24 Major/Minor keys, Camelot code และความคลาดเคลื่อนจาก A=440 เป็น cents
+- **Beat-aligned Chord Timeline** วิเคราะห์คอร์ดตาม beat grid พร้อม sequence smoothing, key-change segments และ confidence gate
+- **Manual Verification** ผู้ใช้ยืนยัน BPM และ Key ได้ ค่าที่แก้จะถูกบันทึกในโปรเจกต์และไม่ถูกแทนด้วยค่าความมั่นใจต่ำ
 
 ## Quality Lock
 
 - Playback ปกติใช้ AudioContext ที่ sample rate สูงสุดและส่งสัญญาณตรงโดยไม่เพิ่ม gain, fade หรือ loudness processing
 - ASIO ใช้ native NAudio backend รับ PCM float32 จาก FFmpeg โดยตรง ส่วน WASAPI Exclusive ใช้ native Windows Core Audio และจะเปิดเฉพาะเมื่อ driver รองรับ format/sample rate ของโปรเจกต์
 - Render ผสมเสียงภายในแบบ double precision และใช้ high-quality resampling เฉพาะเมื่อ sample rate ของไฟล์ต่างกัน
+- การวิเคราะห์ Music DNA ทำงานใน Web Worker จึงไม่หยุด playback/UI และใช้ FFT engine ที่เป็น MIT
 - WAV ล็อกเป็น 32-bit Float ที่ sample rate สูงสุดของชุดเพลง และ FLAC ใช้ 24-bit Lossless Compression
 - MP3 เลือก CBR 128, 192, 256 หรือ 320 kbps ได้ โดยหน้าจอ Export จะแจ้งชัดเจนว่าเป็น Lossy และไม่ใช้คำว่า Quality Lock
 - รองรับไฟล์ต้นทาง Mono/Stereo เท่านั้น เพื่อไม่ Downmix ไฟล์หลาย channel โดยไม่ตั้งใจ

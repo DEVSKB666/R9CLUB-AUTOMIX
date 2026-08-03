@@ -24,4 +24,18 @@ describe('audio quality checks', () => {
     const warnings = buildQualityWarnings([track], new Map([['a', fakeBuffer(Array.from({ length: 20 }, () => 0))]]));
     expect(warnings.map((warning) => warning.type)).toEqual(['drift', 'clipping']);
   });
+
+  it('treats an uncertain OUT as a warning instead of a render blocker', () => {
+    const tracks = [
+      { id: 'a', name: 'A', duration: 2, offset: 0, exitAnchor: 1.5, exitConfidence: .2 },
+      { id: 'b', name: 'B', duration: 2, offset: 1.5 },
+    ];
+    const buffers = new Map([
+      ['a', fakeBuffer(Array.from({ length: 20 }, () => 0))],
+      ['b', fakeBuffer(Array.from({ length: 20 }, () => 0))],
+    ]);
+    const warnings = buildQualityWarnings(tracks, buffers);
+    expect(warnings.map((warning) => warning.type)).toEqual(['anchor']);
+    expect(warnings[0].detail).toContain('Export ต่อ');
+  });
 });

@@ -228,6 +228,37 @@ button:disabled { opacity: .38; cursor: default; }
 .anchor-clip .clip-playing { bottom: 4px; }
 .anchor-clip.anchor-error { box-shadow: inset 0 0 0 2px #e86c6c; }
 .anchor-clip.anchor-error .clip-title::after { content: 'CHECK OUT'; margin-left: 6px; padding: 1px 3px; color: #ffd7d7; background: #6d2727; font-size: 6px; }
+.anchor-help { margin: -2px 0 5px; color: #748085; font-size: 7px; line-height: 1.45; }
+.music-dna-section { gap: 9px; }
+.music-dna-meters { display: grid; grid-template-columns: .85fr 1.15fr; gap: 6px; }
+.music-dna-meters > span { min-width: 0; min-height: 58px; display: grid; align-content: center; gap: 2px; padding: 7px 8px; border: 1px solid #2c3c41; border-radius: 4px; background: #0b1113; }
+.music-dna-meters small { color: #66757a; font-size: 6px; }
+.music-dna-meters b { overflow: hidden; color: #eef5f6; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.music-dna-meters em { color: #7c898e; font-size: 6px; font-style: normal; }
+.music-dna-meters em.verified { color: #69d39b; }
+.music-dna-meters em.review, .music-analysis-detail .review { color: var(--amber); }
+.music-dna-fields { display: grid; grid-template-columns: .8fr 1.2fr; gap: 7px; }
+.music-dna-fields .field { min-width: 0; }
+.music-dna-fields select { width: 100%; height: 29px; padding: 0 5px; color: #d5dddf; font-size: 8px; }
+.music-analysis-detail { display: grid; gap: 3px; color: #68757a; font-size: 7px; }
+.music-analysis-detail b { color: #b9c4c7; font-weight: 600; }
+.candidate-row { display: flex; align-items: center; gap: 4px; }
+.candidate-row > small { margin-right: auto; color: #627075; font-size: 6px; }
+.candidate-row button { min-width: 37px; height: 20px; padding: 0 4px; border: 1px solid #344348; border-radius: 3px; color: #aebbc0; background: #0b1012; cursor: pointer; font-size: 7px; }
+.candidate-row button:hover { color: #e9f9fb; border-color: #2b7b89; }
+.chord-timeline { display: grid; gap: 5px; }
+.chord-timeline > small { color: #627075; font-size: 6px; }
+.chord-timeline > div { max-height: 74px; display: flex; flex-wrap: wrap; gap: 3px; overflow-y: auto; }
+.chord-timeline button { min-width: 24px; padding: 3px 5px; border: 1px solid #314147; border-radius: 3px; color: #d5e9ec; background: #102027; text-align: center; font-family: inherit; font-size: 7px; cursor: pointer; }
+.chord-timeline button:hover { border-color: #2b7b89; background: #153039; }
+.chord-timeline button.manual { color: #b9f3d3; border-color: #2c6c4b; }
+.chord-timeline em { color: #6e797d; font-size: 7px; font-style: normal; }
+.key-change-note { padding: 5px 6px; border-left: 2px solid var(--amber); color: #99835d; background: #1a1710; font-size: 7px; }
+.music-dna-pending { min-height: 48px; display: flex; align-items: center; gap: 9px; padding: 7px; border: 1px dashed #314047; color: #668087; }
+.music-dna-pending span { display: grid; gap: 2px; }
+.music-dna-pending b { color: #b9c3c6; font-size: 8px; }
+.music-dna-pending small { color: #667176; font-size: 7px; }
+.music-dna-section .secondary-wide { height: 31px; margin-top: 0; font-size: 8px; }
 .anchor-marker { width: 1px; position: absolute; top: 25px; bottom: 0; z-index: 4; pointer-events: none; background: rgba(239,169,74,.95); }
 .anchor-marker b { position: absolute; top: 2px; left: 3px; padding: 1px 3px; border-radius: 2px; color: #17120a; background: var(--amber); font-size: 6px; }
 .anchor-out { background: rgba(84,199,232,.95); }

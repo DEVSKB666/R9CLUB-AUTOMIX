@@ -47,7 +47,15 @@ export function inspectOverlapPeak(left, right, leftBuffer, rightBuffer, samples
 
 export function buildQualityWarnings(tracks, buffers) {
   const warnings = [];
-  tracks.forEach((track) => {
+  tracks.forEach((track, index) => {
+    if (index < tracks.length - 1 && (track.exitConfidence ?? 1) < .65) {
+      warnings.push({
+        type: 'anchor',
+        trackId: track.id,
+        title: `${track.name}: จุด OUT อัตโนมัติยังไม่ชัดเจน`,
+        detail: 'OUT คือจุดส่งต่อไปเพลงถัดไป · ปรับเองได้ หรือกด Export ต่อเพื่อใช้ค่าปัจจุบัน',
+      });
+    }
     if ((track.beatConfidence || 0) >= .2 && Math.abs(track.beatDriftMs || 0) >= 75) {
       const direction = track.beatDriftMs > 0 ? 'ช้า' : 'เร็ว';
       warnings.push({ type: 'drift', trackId: track.id, title: `${track.name}: จังหวะ ${direction} ${Math.abs(track.beatDriftMs)} ms`, detail: 'ตรวจตำแหน่ง IN ก่อน Export' });

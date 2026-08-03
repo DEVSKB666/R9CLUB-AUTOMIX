@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { detectAnchorsFromEnvelope, detectBeatDriftFromEnvelope, templateEntryAnchor } from './audio-analysis';
 import { buildQualityWarnings } from './audio-quality';
+import { analyzeMusicBuffer } from './music-analysis-client';
+import { musicTheory } from './music-analysis';
 import r9Logo from './assets/r9club-logo.png';
 
 const api = window.beatBlend;
@@ -18,6 +20,10 @@ const exportFormats = [
   { value: 'mp3', label: 'MP3', quality: 'CBR', detail: 'ไฟล์สำหรับฟังและส่งต่อ', lossless: false },
 ];
 const mp3Bitrates = [128, 192, 256, 320];
+const keyChoices = musicTheory.NOTE_NAMES.flatMap((key, root) => [
+  { value: `${key}|major`, label: `${key} Major`, camelot: musicTheory.CAMELOT_MAJOR[root] },
+  { value: `${key}|minor`, label: `${key} Minor`, camelot: musicTheory.CAMELOT_MINOR[root] },
+]);
 const shortcuts = [
   ['เล่น / หยุดชั่วคราว', 'Space'],
   ['หยุดเล่น', 'Esc'],
@@ -87,6 +93,23 @@ function formatBytes(bytes = 0) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 MB';
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(2)} GB`;
   return `${(bytes / 1048576).toFixed(bytes >= 104857600 ? 0 : 1)} MB`;
+}
+
+function preserveManualMusicAnalysis(detected, saved) {
+  if (!detected) return saved || null;
+  const merged = { ...detected };
+  if (saved?.bpmSource === 'manual') Object.assign(merged, { bpm: saved.bpm, bpmConfidence: 1, bpmAmbiguous: false, bpmSource: 'manual' });
+  if (saved?.keySource === 'manual') Object.assign(merged, { key: saved.key, scale: saved.scale, keyLabel: saved.keyLabel, camelot: saved.camelot, keyConfidence: 1, keySource: 'manual' });
+  if (saved?.chords?.some((chord) => chord.source === 'manual')) merged.chords = saved.chords;
+  return merged;
+}
+
+function normalizeChordName(value) {
+  const match = String(value || '').trim().match(/^([A-Ga-g])([#b]?)(m7|maj7|m|7|sus2|sus4|dim)?$/i); if (!match) return '';
+  const flats = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
+  const root = `${match[1].toUpperCase()}${match[2] || ''}`; const suffixText = (match[3] || '').toLowerCase();
+  const suffix = suffixText === 'maj7' ? 'maj7' : suffixText;
+  return `${flats[root] || root}${suffix}`;
 }
 
 function chooseWebAudioFiles() {
@@ -214,9 +237,10 @@ function TimelineTrack({ track, index, zoom, selected, playing, onSelect, onPlay
 }
 
 function QueueItem({ track, index, count, selected, playing, onSelect, onPlay, onMove, onRemove }) {
+  const music = track.musicAnalysis;
   return <div className={`queue-item ${selected ? 'selected' : ''}`} onClick={onSelect}>
     <button className="queue-play" title={playing ? 'หยุด' : 'เล่นจากเพลงนี้'} onClick={(event) => { event.stopPropagation(); onPlay(); }}>{playing ? <Pause size={13} fill="currentColor" /> : <Play size={13} fill="currentColor" />}</button>
-    <span className="queue-color" style={{ background: track.color }} /><div><strong>{track.name}</strong><small>{formatTime(track.offset || 0)} · {formatTime(playableDuration(track))}</small></div>
+    <span className="queue-color" style={{ background: track.color }} /><div><strong>{track.name}</strong><small>{music?.bpm ? `${music.bpmConfidence < .35 ? '≈ ' : ''}${music.bpm.toFixed(2)} BPM · ${music.keyConfidence >= .3 ? (music.camelot || music.keyLabel) : 'KEY ?'}` : `${formatTime(track.offset || 0)} · ${formatTime(playableDuration(track))}`}</small></div>
     <div className="queue-move"><button disabled={index === 0} title="เลื่อนขึ้น" onClick={(event) => { event.stopPropagation(); onMove(-1); }}><ArrowUp size={12} /></button><button disabled={index === count - 1} title="เลื่อนลง" onClick={(event) => { event.stopPropagation(); onMove(1); }}><ArrowDown size={12} /></button></div>
     <button className="queue-remove" title="ลบ" onClick={(event) => { event.stopPropagation(); onRemove(); }}><X size={13} /></button>
   </div>;
@@ -234,10 +258,12 @@ function App() {
   const [showAudioPanel, setShowAudioPanel] = useState(false); const [audioDevices, setAudioDevices] = useState([]); const [audioDeviceId, setAudioDeviceId] = useState(() => localStorage.getItem('r9club-audio-device') || 'default'); const [latencyMode, setLatencyMode] = useState(() => localStorage.getItem('r9club-latency-mode') || 'playback');
   const [audioBackend, setAudioBackend] = useState(() => api && desktopPlatform === 'win32' ? localStorage.getItem('r9club-audio-backend') || 'shared' : 'shared'); const [audioCapabilities, setAudioCapabilities] = useState(null); const [probingAudio, setProbingAudio] = useState(false); const [asioDriver, setAsioDriver] = useState(() => localStorage.getItem('r9club-asio-driver') || '');
   const [audioStats, setAudioStats] = useState({ state: 'idle', sampleRate: 0, baseLatency: null, outputLatency: null, interruptions: 0, sinkSupported: false, deviceLabel: 'System Default' });
+  const [musicAnalyzingId, setMusicAnalyzingId] = useState(null);
   const timelineRef = useRef(null); const panRef = useRef(null); const buffersRef = useRef(new Map()); const contextRef = useRef(null); const sourcesRef = useRef([]); const animationRef = useRef(null); const clockRef = useRef(null); const loopRangeRef = useRef(null);
   const tracksRef = useRef(tracks); const undoRef = useRef([]); const redoRef = useRef([]); const renderStartedRef = useRef(null); const webRenderTimerRef = useRef(null); const playingRef = useRef(false); const nativePlaybackRef = useRef(false);
 
   const selected = tracks.find((track) => track.id === selectedId) || tracks[0];
+  const selectedMusic = selected?.musicAnalysis;
   const totalDuration = useMemo(() => tracks.length ? Math.max(...tracks.map((track) => (track.offset || 0) + playableDuration(track))) : 0, [tracks]);
   const masterSampleRate = useMemo(() => Math.max(44100, ...tracks.map((track) => track.sampleRate || 0)), [tracks]);
   const selectedExportFormat = exportFormats.find((item) => item.value === exportFormat) || exportFormats[0];
@@ -423,12 +449,16 @@ function App() {
       const peaks = Array.from({ length: slots }, (_, index) => { let peak = 0; const start = index * block; for (let cursor = start; cursor < Math.min(start + block, channel.length); cursor += 16) peak = Math.max(peak, Math.abs(channel[cursor])); return Math.min(1, peak * 1.65); });
       let signalPeak = 0; let clippedSamples = 0; let inspectedSamples = 0;
       for (let cursor = 0; cursor < channel.length; cursor += 8) { const level = Math.abs(channel[cursor]); signalPeak = Math.max(signalPeak, level); if (level >= .999) clippedSamples += 1; inspectedSamples += 1; }
-      const expectedEntry = templateEntryAnchor(analysisBpm, analysisIntroBars, buffer.duration);
-      const anchors = detectAnchors(buffer, analysisBpm, expectedEntry);
+      let musicAnalysis = null; let musicAnalysisError = '';
+      try { musicAnalysis = preserveManualMusicAnalysis(await analyzeMusicBuffer(buffer), track.musicAnalysis); }
+      catch (error) { musicAnalysisError = error.message || 'วิเคราะห์ BPM/KEY ไม่สำเร็จ'; }
+      const detectedBpm = musicAnalysis?.bpmConfidence >= .45 ? musicAnalysis.bpm : analysisBpm;
+      const expectedEntry = templateEntryAnchor(detectedBpm, analysisIntroBars, buffer.duration);
+      const anchors = detectAnchors(buffer, detectedBpm, expectedEntry);
       anchors.entryAnchor = expectedEntry;
       anchors.entryConfidence = 1;
       await context.close();
-      setTracksSynced((current) => alignTracks(current.map((item) => item.id === track.id ? { ...item, duration: buffer.duration, sampleRate: buffer.sampleRate, channelCount: buffer.numberOfChannels, peaks, signalPeak, clippedRatio: clippedSamples / Math.max(1, inspectedSamples), ...anchors } : item)));
+      setTracksSynced((current) => alignTracks(current.map((item) => item.id === track.id ? { ...item, duration: buffer.duration, sampleRate: buffer.sampleRate, channelCount: buffer.numberOfChannels, peaks, signalPeak, clippedRatio: clippedSamples / Math.max(1, inspectedSamples), musicAnalysis, musicAnalysisError, ...anchors } : item)));
       return true;
     } catch (_error) { setMessage(`อ่าน waveform ของ ${track.name} ไม่สำเร็จ`); return false; }
   };
@@ -437,14 +467,42 @@ function App() {
     if (analyzing) return;
     const chosen = api ? await api.chooseAudio() : await chooseWebAudioFiles(); if (!chosen.length) return; const startIndex = tracks.length;
     const next = chosen.map((track, index) => ({ ...track, id: `${Date.now()}-${index}`, duration: 0, trimStart: 0, trimEnd: 0, entryAnchor: 0, exitAnchor: 0, offset: 0, color: colors[(startIndex + index) % colors.length], peaks: null }));
-    commitTracks((current) => [...current, ...next]); setAnalyzing(true); setMessage(`กำลังหา IN/OUT และจัดซ้อน ${chosen.length} เพลงอัตโนมัติ`);
+    commitTracks((current) => [...current, ...next]); setAnalyzing(true); setMessage(`กำลังตรวจ BPM · KEY · CHORD · IN/OUT จำนวน ${chosen.length} เพลง`);
     const results = await Promise.all(next.map((track) => decodeTrack(track)));
     const completed = results.filter(Boolean).length; setAnalyzing(false);
-    setMessage(completed === chosen.length ? `จัด Anchor อัตโนมัติครบ ${completed} เพลงแล้ว` : `จัด Anchor สำเร็จ ${completed}/${chosen.length} เพลง กรุณาตรวจไฟล์ที่อ่านไม่สำเร็จ`);
+    setMessage(completed === chosen.length ? `วิเคราะห์ Music DNA และจัด Anchor ครบ ${completed} เพลงแล้ว` : `วิเคราะห์สำเร็จ ${completed}/${chosen.length} เพลง กรุณาตรวจไฟล์ที่อ่านไม่สำเร็จ`);
   };
 
   const updateTrack = (id, updates) => commitTracks((current) => alignTracks(current.map((track) => track.id === id ? { ...track, ...updates } : track)));
   const previewTrack = (id, updates) => setTracksSynced((current) => alignTracks(current.map((track) => track.id === id ? { ...track, ...updates } : track)));
+  const analyzeTrackMusic = async (track) => {
+    const buffer = buffersRef.current.get(track.id); if (!buffer || musicAnalyzingId) return;
+    setMusicAnalyzingId(track.id); setMessage(`กำลังวิเคราะห์ BPM · KEY · CHORD ของ ${track.name}`);
+    try {
+      const musicAnalysis = preserveManualMusicAnalysis(await analyzeMusicBuffer(buffer), track.musicAnalysis); const detectedBpm = musicAnalysis.bpmConfidence >= .45 ? musicAnalysis.bpm : bpm;
+      const expectedEntry = templateEntryAnchor(detectedBpm, introBars, buffer.duration); const anchors = detectAnchors(buffer, detectedBpm, expectedEntry);
+      setTracksSynced((current) => alignTracks(current.map((item) => item.id === track.id ? { ...item, musicAnalysis, musicAnalysisError: '', ...anchors, entryAnchor: expectedEntry, entryConfidence: 1 } : item)));
+      setMessage(`วิเคราะห์แล้ว: ${musicAnalysis.bpm.toFixed(2)} BPM · ${musicAnalysis.keyConfidence >= .3 ? `${musicAnalysis.keyLabel} (${musicAnalysis.camelot})` : 'KEY ต้องยืนยัน'} · ${musicAnalysis.chords.length} ช่วงคอร์ด`);
+    } catch (error) { setTracksSynced((current) => current.map((item) => item.id === track.id ? { ...item, musicAnalysisError: error.message } : item)); setMessage(`วิเคราะห์เพลงไม่สำเร็จ: ${error.message}`); }
+    finally { setMusicAnalyzingId(null); }
+  };
+  const confirmDetectedBpm = (value) => {
+    if (!selected || !selectedMusic) return; const detectedBpm = Math.min(240, Math.max(40, Number(value) || selectedMusic.bpm));
+    updateTrack(selected.id, { musicAnalysis: { ...selectedMusic, bpm: detectedBpm, bpmConfidence: 1, bpmAmbiguous: false, bpmSource: 'manual' } });
+  };
+  const confirmDetectedKey = (value) => {
+    if (!selected || !selectedMusic) return; const choice = keyChoices.find((item) => item.value === value); if (!choice) return;
+    const [key, scale] = choice.value.split('|');
+    updateTrack(selected.id, { musicAnalysis: { ...selectedMusic, key, scale, keyLabel: choice.label, camelot: choice.camelot, keyConfidence: 1, keySource: 'manual' } });
+  };
+  const editDetectedChord = (index) => {
+    if (!selected || !selectedMusic?.chords?.[index]) return; const current = selectedMusic.chords[index];
+    const entered = window.prompt('แก้คอร์ด (เช่น C, F#m, G7, Bbmaj7, Asus4)', current.label); if (entered === null) return;
+    const label = normalizeChordName(entered);
+    if (!label) { setMessage('รูปแบบคอร์ดไม่ถูกต้อง · รองรับ Major, Minor, 7, maj7, m7, sus2, sus4 และ dim'); return; }
+    const chords = selectedMusic.chords.map((chord, chordIndex) => chordIndex === index ? { ...chord, label, confidence: 1, source: 'manual' } : chord);
+    updateTrack(selected.id, { musicAnalysis: { ...selectedMusic, chords } }); setMessage(`ยืนยันคอร์ด ${current.label} → ${label} แล้ว`);
+  };
   const analyzeAll = async () => {
     if (!tracks.length) return; setAnalyzing(true);
     try {
@@ -452,8 +510,9 @@ function App() {
       setTracksSynced((current) => alignTracks(current.map((track) => {
         const buffer = buffersRef.current.get(track.id);
         if (!buffer) return track;
-        const expectedEntry = templateEntryAnchor(bpm, introBars, buffer.duration);
-        const anchors = detectAnchors(buffer, bpm, expectedEntry);
+        const trackBpm = track.musicAnalysis?.bpmConfidence >= .45 ? track.musicAnalysis.bpm : bpm;
+        const expectedEntry = templateEntryAnchor(trackBpm, introBars, buffer.duration);
+        const anchors = detectAnchors(buffer, trackBpm, expectedEntry);
         return { ...track, ...anchors, entryAnchor: expectedEntry, entryConfidence: 1 };
       })));
       setMessage('ตรวจ OUT ใหม่โดยเก็บเสียงหัวและท้ายไฟล์ไว้ครบแล้ว');
@@ -488,7 +547,7 @@ function App() {
   const moveTrack = (index, direction) => { stopPlayback(); commitTracks((current) => { const next = [...current]; [next[index], next[index + direction]] = [next[index + direction], next[index]]; return alignTracks(next); }); };
   const removeTrack = (id) => { stopPlayback(); commitTracks((current) => alignTracks(current.filter((track) => track.id !== id))); setPlayhead(0); };
 
-  const getProjectPayload = () => ({ version: 5, savedAt: new Date().toISOString(), settings: { bpm, introBars, auditionBars }, tracks });
+  const getProjectPayload = () => ({ version: 6, savedAt: new Date().toISOString(), settings: { bpm, introBars, auditionBars }, tracks });
   const runQualityCheck = (pendingExport = false) => setQualityReport({ warnings: buildQualityWarnings(tracks, buffersRef.current), pendingExport });
   const openExportSettings = () => { if (tracks.length && !exporting) setShowExportSettings(true); };
   const exportMix = async (skipQuality = false) => {
@@ -496,8 +555,6 @@ function App() {
     setShowExportSettings(false);
     const unreadable = tracks.filter((track) => !track.duration || (api && !track.path));
     if (unreadable.length) { setMessage(`ยัง Export ไม่ได้: มีไฟล์เสียงที่อ่านไม่สำเร็จ ${unreadable.length} เพลง`); return; }
-    const invalid = tracks.slice(0, -1).filter((track) => !track.duration || (track.exitConfidence ?? 0) < .65);
-    if (invalid.length) { setMessage(`ยัง Export ไม่ได้: ตรวจ OUT ไม่ชัดเจน ${invalid.length} เพลง`); return; }
     if (!skipQuality) { const warnings = buildQualityWarnings(tracks, buffersRef.current); if (warnings.length) { setQualityReport({ warnings, pendingExport: true }); return; } }
     setExporting(true); setProgress(0); renderStartedRef.current = Date.now();
     const formatQuality = exportFormat === 'mp3' ? `${mp3Bitrate} kbps CBR · Lossy` : selectedExportFormat.quality;
@@ -609,13 +666,45 @@ function App() {
     </header>
     <main className="workspace gapless-workspace">
       <aside className="settings-panel queue-panel"><div className="panel-heading"><ListMusic size={17} /><h2>คิวเพลง</h2><span>{tracks.length}</span></div><div className="queue-list">{tracks.map((track, index) => <QueueItem key={track.id} track={track} index={index} count={tracks.length} selected={selected?.id === track.id} playing={isActive(track)} onSelect={() => setSelectedId(track.id)} onPlay={() => isActive(track) ? stopPlayback() : startPlayback(track.offset || 0)} onMove={(direction) => moveTrack(index, direction)} onRemove={() => removeTrack(track.id)} />)}</div>
-        <button className="queue-add" onClick={addTracks} disabled={analyzing}><Plus size={15} /> {analyzing ? 'กำลังจัด Anchor...' : 'เพิ่มเพลง'}</button><section className="setting-section compact-settings"><div className="section-label"><Gauge size={15} /><span>Anchor Align</span></div><div className="field-grid"><NumberField label="BPM" value={bpm} min={40} max={240} step={1} onChange={setBpm} /><NumberField label="หัวก่อน IN" value={introBars} min={0} max={16} step={1} suffix="ห้อง" onChange={setIntroBars} /></div><div className="hard-cut-card"><Link2 size={16} /><span><b>Auto Anchor พร้อมใช้งาน</b><small>เพิ่มเพลงแล้วจัด IN → OUT ทันที</small></span><Check size={15} /></div><button className="secondary-wide" onClick={analyzeAll} disabled={!tracks.length || analyzing}>{analyzing ? <RotateCcw className="spin" size={16} /> : <Activity size={16} />}{analyzing ? 'กำลังตรวจสอบ...' : 'วิเคราะห์ Anchor ใหม่'}</button></section>
+        <button className="queue-add" onClick={addTracks} disabled={analyzing}><Plus size={15} /> {analyzing ? 'กำลังวิเคราะห์ Music DNA...' : 'เพิ่มเพลง'}</button><section className="setting-section compact-settings"><div className="section-label"><Gauge size={15} /><span>Anchor Align</span></div><div className="field-grid"><NumberField label="Mix BPM สำรอง" value={bpm} min={40} max={240} step={1} onChange={setBpm} /><NumberField label="หัวก่อน IN" value={introBars} min={0} max={16} step={1} suffix="ห้อง" onChange={setIntroBars} /></div><div className="hard-cut-card"><Link2 size={16} /><span><b>Auto Anchor พร้อมใช้งาน</b><small>ใช้ BPM รายเพลงจัด IN → OUT อัตโนมัติ</small></span><Check size={15} /></div><button className="secondary-wide" onClick={analyzeAll} disabled={!tracks.length || analyzing}>{analyzing ? <RotateCcw className="spin" size={16} /> : <Activity size={16} />}{analyzing ? 'กำลังตรวจสอบ...' : 'วิเคราะห์ Anchor ใหม่'}</button></section>
       </aside>
       <section className="timeline-panel gapless-timeline"><div className="timeline-header"><div><h1>Arrangement</h1><p>{tracks.length ? `${tracks.length} เพลง · Auto Anchor Aligned` : 'ยังไม่มีเพลงใน Arrangement'}</p></div><div className="timeline-tools"><IconButton title="Zoom Out" onClick={() => setZoom((value) => Math.max(.5, value - .5))}><ZoomOut size={16} /></IconButton><input aria-label="Timeline zoom" title="Ctrl + Mouse Wheel เพื่อ Zoom ตรงตำแหน่งเมาส์" type="range" min="0.5" max="8" step="0.25" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /><IconButton title="Zoom In" onClick={() => setZoom((value) => Math.min(8, value + .5))}><ZoomIn size={16} /></IconButton><span>{zoom.toFixed(2)} px/s</span><button className="add-button" onClick={addTracks} disabled={analyzing}><Plus size={17} /> เพิ่มเพลง</button></div></div>
         {tracks.length ? <div ref={timelineRef} className="timeline-viewport" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} onWheel={handleWheel}><div className="timeline-content anchor-content" style={{ width: Math.max(1, totalDuration * zoom), minHeight: Math.max(360, 52 + tracks.length * 94), '--beat-size': `${Math.max(4, (60 / bpm) * zoom)}px` }}><div className="timeline-ruler">{rulerMarks.map((time) => <span key={time} style={{ left: time * zoom }}>{formatTime(time)}</span>)}</div>{tracks.map((track, index) => <TimelineTrack key={track.id} track={track} index={index} zoom={zoom} selected={selected?.id === track.id} playing={isActive(track)} onSelect={() => setSelectedId(track.id)} onPlay={() => startPlayback(track.offset || 0)} onTrimStart={checkpointTracks} onTrim={(updates) => previewTrack(track.id, updates)} />)}{transitionTimes.map((time, index) => <div key={`${time}-${index}`} className="transition-guide" style={{ left: time * zoom }}><b>LINK {index + 1}</b></div>)}{loopRange && <div className="audition-range" style={{ left: loopRange.start * zoom, width: Math.max(2, (loopRange.end - loopRange.start) * zoom) }}><b>LOOP {auditionBars} BARS</b></div>}<div className="playhead" style={{ left: playhead * zoom }}><i /></div></div></div> : <div className="empty-state"><div className="empty-icon"><FileAudio size={34} /></div><h2>เลือกเพลงที่เตรียม Transition ไว้</h2><p>ระบบจะหา OUT และ IN แล้ววางซ้อนให้อัตโนมัติ</p><button className="add-button" onClick={addTracks}><Plus size={17} /> เลือกหลายเพลง</button></div>}
         <div className="timeline-status"><span>{loopRange ? <><Repeat2 size={13} /> Transition Loop · LINK {loopRange.linkIndex + 1}</> : <><Link2 size={13} /> Anchor aligned overlap</>}</span><span>{tracks.length} tracks</span><span>{formatTime(totalDuration)}</span></div>
       </section>
-      <aside className="inspector-panel"><div className="panel-heading"><Scissors size={17} /><h2>ปรับ Anchor</h2></div>{selected ? <><div className="selected-track"><span className="album-tile" style={{ background: selected.color }}><Music2 size={24} /></span><div><strong>{selected.name}</strong><span>{selected.sampleRate ? `${(selected.sampleRate / 1000).toFixed(1)} kHz · ${selected.channelCount === 1 ? 'Mono' : 'Stereo'}` : `เริ่มที่ ${formatTime(selected.offset || 0, true)}`} · {bpm} BPM</span></div></div><section className="inspector-section"><h3>จุดเชื่อมที่เตรียมไว้</h3><NumberField label="IN · เพลงเริ่มขึ้น" value={selected.entryAnchor || 0} max={selected.duration} suffix="วินาที" onChange={(value) => updateTrack(selected.id, { entryAnchor: Math.max(0, value) })} /><NumberField label="OUT · เพลงลง/จบ" value={selected.exitAnchor || selected.duration} max={selected.duration} suffix="วินาที" onChange={(value) => updateTrack(selected.id, { exitAnchor: Math.max(0, value) })} /><div className="anchor-summary"><span>ตำแหน่งบน Mix</span><b>{formatTime(selected.offset || 0, true)}</b><i /><span>ช่วงที่ซ้อน</span><b>{selected === tracks[0] ? '-' : `${Math.max(0, anchorIn(selected)).toFixed(1)}s`}</b></div></section><section className="inspector-section quality-summary"><h3>Quality Signal</h3><div><span>Beat Drift</span><b className={(selected.beatConfidence || 0) >= .2 && Math.abs(selected.beatDriftMs || 0) >= 75 ? 'warn' : ''}>{(selected.beatConfidence || 0) < .2 ? 'ไม่พบปัญหา' : `${selected.beatDriftMs > 0 ? '+' : ''}${selected.beatDriftMs || 0} ms`}</b></div><div><span>Source Peak</span><b>{selected.signalPeak ? `${(20 * Math.log10(selected.signalPeak)).toFixed(1)} dBFS` : '-'}</b></div></section><section className="inspector-section"><h3>Lossless Master</h3><div className="master-format"><span>WAV</span><b>32-BIT FLOAT</b></div><div className="lossless-lock"><ShieldCheck size={17} /><span><b>QUALITY LOCK</b><small>{(masterSampleRate / 1000).toFixed(1)} kHz · ไม่มี MP3 / Loudness / Fade</small></span></div></section><button className="danger-text" onClick={() => removeTrack(selected.id)}><Trash2 size={15} /> ลบเพลงนี้</button></> : <div className="inspector-empty"><Music2 size={22} /><span>เลือกเพลงเพื่อปรับ Anchor</span></div>}</aside>
+      <aside className="inspector-panel">
+        <div className="panel-heading"><Scissors size={17} /><h2>ปรับ Anchor</h2></div>
+        {selected ? <>
+          <div className="selected-track"><span className="album-tile" style={{ background: selected.color }}><Music2 size={24} /></span><div><strong>{selected.name}</strong><span>{selected.sampleRate ? `${(selected.sampleRate / 1000).toFixed(1)} kHz · ${selected.channelCount === 1 ? 'Mono' : 'Stereo'}` : `เริ่มที่ ${formatTime(selected.offset || 0, true)}`} · {selectedMusic?.bpm?.toFixed(2) || bpm} BPM</span></div></div>
+          <section className="inspector-section">
+            <h3>จุดเชื่อมที่เตรียมไว้</h3><p className="anchor-help">IN = จุดรับเพลงนี้ · OUT = จุดส่งต่อไปเพลงถัดไป</p>
+            <NumberField label="IN · จุดรับเพลงนี้" value={selected.entryAnchor || 0} max={selected.duration} suffix="วินาที" onChange={(value) => updateTrack(selected.id, { entryAnchor: Math.min(selected.duration, Math.max(0, value)), entryConfidence: 1 })} />
+            <NumberField label="OUT · จุดส่งต่อเพลงถัดไป" value={selected.exitAnchor || selected.duration} max={selected.duration} suffix="วินาที" onChange={(value) => updateTrack(selected.id, { exitAnchor: Math.min(selected.duration, Math.max(0, value)), exitConfidence: 1 })} />
+            <div className="anchor-summary"><span>ตำแหน่งบน Mix</span><b>{formatTime(selected.offset || 0, true)}</b><i /><span>ช่วงที่ซ้อน</span><b>{selected === tracks[0] ? '-' : `${Math.max(0, anchorIn(selected)).toFixed(1)}s`}</b></div>
+          </section>
+          <section className="inspector-section music-dna-section">
+            <h3>Music DNA · BPM / Key / Chord</h3>
+            {selectedMusic ? <>
+              <div className="music-dna-meters">
+                <span><small>BPM</small><b>{selectedMusic.bpmConfidence < .35 ? '≈ ' : ''}{selectedMusic.bpm.toFixed(2)}</b><em className={selectedMusic.bpmConfidence >= .65 ? 'verified' : 'review'}>{selectedMusic.bpmSource === 'manual' ? 'MANUAL' : `${Math.round(selectedMusic.bpmConfidence * 100)}%${selectedMusic.bpmConfidence < .35 ? ' · VERIFY' : ''}`}</em></span>
+                <span><small>KEY</small><b>{selectedMusic.keyConfidence >= .3 ? selectedMusic.keyLabel : 'ยังไม่ยืนยัน'}</b><em className={selectedMusic.keyConfidence >= .65 ? 'verified' : 'review'}>{selectedMusic.keyConfidence >= .3 ? `${selectedMusic.camelot} · ` : ''}{Math.round(selectedMusic.keyConfidence * 100)}%</em></span>
+              </div>
+              <div className="music-dna-fields">
+                <NumberField label="ยืนยัน BPM" value={selectedMusic.bpm} min={40} max={240} step={.01} onChange={confirmDetectedBpm} />
+                <label className="field"><span>ยืนยัน Key</span><div className="number-wrap"><select value={`${selectedMusic.key}|${selectedMusic.scale}`} onChange={(event) => confirmDetectedKey(event.target.value)}>{keyChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label} · {choice.camelot}</option>)}</select></div></label>
+              </div>
+              <div className="music-analysis-detail"><span>TUNING <b>{selectedMusic.tuningFrequency} Hz</b> ({selectedMusic.tuningCents > 0 ? '+' : ''}{selectedMusic.tuningCents} cents)</span>{selectedMusic.bpmAmbiguous && <span className="review">ตรวจพบ Half/Double Tempo · กรุณาฟังยืนยัน</span>}</div>
+              {selectedMusic.bpmCandidates?.length > 1 && <div className="candidate-row"><small>BPM CANDIDATES</small>{selectedMusic.bpmCandidates.slice(0, 4).map((candidate) => <button key={candidate.bpm} onClick={() => confirmDetectedBpm(candidate.bpm)}>{candidate.bpm}</button>)}</div>}
+              <div className="chord-timeline"><small>CHORD TIMELINE · {selectedMusic.chords?.length || 0} ช่วง · คลิกเพื่อแก้และยืนยัน</small><div>{selectedMusic.chords?.length ? selectedMusic.chords.map((chord, index) => <button className={chord.source === 'manual' ? 'manual' : ''} key={`${chord.start}-${index}`} title={`${formatTime(chord.start, true)}–${formatTime(chord.end, true)} · ${Math.round(chord.confidence * 100)}%`} onClick={() => editDetectedChord(index)}>{chord.label}</button>) : <em>ยังไม่พบคอร์ดที่มั่นใจพอ</em>}</div></div>
+              {selectedMusic.keyChanges?.length > 0 && <div className="key-change-note">พบการเปลี่ยน Key {selectedMusic.keyChanges.length} ช่วง · ไม่บังคับใช้ Global Key</div>}
+            </> : <div className="music-dna-pending"><Activity className={musicAnalyzingId === selected.id ? 'spin' : ''} size={18} /><span><b>{selected.musicAnalysisError ? 'วิเคราะห์ไม่สำเร็จ' : 'รอวิเคราะห์ Music DNA'}</b><small>{selected.musicAnalysisError || 'ระบบจะตรวจ BPM, Key, Tuning และ Chord'}</small></span></div>}
+            <button className="secondary-wide" disabled={Boolean(musicAnalyzingId)} onClick={() => analyzeTrackMusic(selected)}>{musicAnalyzingId === selected.id ? <RotateCcw className="spin" size={15} /> : <RefreshCw size={15} />}{musicAnalyzingId === selected.id ? 'กำลังวิเคราะห์...' : 'วิเคราะห์ BPM / KEY / CHORD ใหม่'}</button>
+          </section>
+          <section className="inspector-section quality-summary"><h3>Quality Signal</h3><div><span>Beat Drift</span><b className={(selected.beatConfidence || 0) >= .2 && Math.abs(selected.beatDriftMs || 0) >= 75 ? 'warn' : ''}>{(selected.beatConfidence || 0) < .2 ? 'ไม่พบปัญหา' : `${selected.beatDriftMs > 0 ? '+' : ''}${selected.beatDriftMs || 0} ms`}</b></div><div><span>Source Peak</span><b>{selected.signalPeak ? `${(20 * Math.log10(selected.signalPeak)).toFixed(1)} dBFS` : '-'}</b></div></section>
+          <section className="inspector-section"><h3>Lossless Master</h3><div className="master-format"><span>WAV</span><b>32-BIT FLOAT</b></div><div className="lossless-lock"><ShieldCheck size={17} /><span><b>QUALITY LOCK</b><small>{(masterSampleRate / 1000).toFixed(1)} kHz · ไม่มี MP3 / Loudness / Fade</small></span></div></section>
+          <button className="danger-text" onClick={() => removeTrack(selected.id)}><Trash2 size={15} /> ลบเพลงนี้</button>
+        </> : <div className="inspector-empty"><Music2 size={22} /><span>เลือกเพลงเพื่อปรับ Anchor</span></div>}
+      </aside>
     </main>
     {showExportSettings && <div className="modal-backdrop export-settings-backdrop" onMouseDown={() => setShowExportSettings(false)}><section className="export-settings-dialog" onMouseDown={(event) => event.stopPropagation()}>
       <header className="export-settings-heading"><span><Download size={20} /></span><div><h2>EXPORT FORMAT</h2><p>เลือกไฟล์ Master หรือไฟล์สำหรับฟัง</p></div><IconButton title="ปิด" onClick={() => setShowExportSettings(false)}><X size={16} /></IconButton></header>
@@ -628,7 +717,7 @@ function App() {
       <div className="dialog-actions"><button className="secondary-action" onClick={() => setShowExportSettings(false)}>ยกเลิก</button><button className="primary-action" onClick={() => exportMix()}><Download size={14} /> เลือกตำแหน่งบันทึก</button></div>
     </section></div>}
     {recoveryProject && <div className="modal-backdrop recovery-backdrop"><div className="recovery-dialog"><div className="dialog-symbol"><History size={23} /></div><div><h2>พบงานบันทึกอัตโนมัติ</h2><p>{recoveryProject.tracks?.length || 0} เพลง · {recoveryProject.savedAt ? new Date(recoveryProject.savedAt).toLocaleString('th-TH') : 'จากการใช้งานครั้งก่อน'}</p></div><div className="dialog-actions"><button className="secondary-action" onClick={discardAutosave}>ไม่ใช้ไฟล์นี้</button><button className="primary-action" onClick={restoreAutosave}><History size={15} /> กู้คืนงาน</button></div></div></div>}
-    {qualityReport && <div className="modal-backdrop quality-backdrop" onMouseDown={() => setQualityReport(null)}><div className="quality-dialog" onMouseDown={(event) => event.stopPropagation()}><div className="quality-heading"><span className={qualityReport.warnings.length ? 'warning' : 'passed'}>{qualityReport.warnings.length ? <TriangleAlert size={21} /> : <ShieldCheck size={21} />}</span><div><h2>{qualityReport.warnings.length ? `พบ ${qualityReport.warnings.length} จุดที่ควรตรวจ` : 'QUALITY CHECK PASSED'}</h2><p>Click · Clipping · Beat Drift</p></div><IconButton title="ปิด" onClick={() => setQualityReport(null)}><X size={16} /></IconButton></div>{qualityReport.warnings.length ? <div className="quality-list">{qualityReport.warnings.map((warning, index) => <button key={`${warning.type}-${warning.trackId}-${index}`} onClick={() => { setSelectedId(warning.trackId); setQualityReport(null); }}><TriangleAlert size={15} /><span><b>{warning.title}</b><small>{warning.detail}</small></span></button>)}</div> : <div className="quality-passed"><ShieldCheck size={31} /><b>ไม่พบจุดเสี่ยงในไฟล์และช่วงซ้อน</b><span>พร้อม Export ตาม Anchor ปัจจุบัน</span></div>}<div className="dialog-actions"><button className="secondary-action" onClick={() => setQualityReport(null)}>ปิด</button>{qualityReport.pendingExport && <button className="primary-action" onClick={() => { setQualityReport(null); exportMix(true); }}>Export ต่อ</button>}</div></div></div>}
+    {qualityReport && <div className="modal-backdrop quality-backdrop" onMouseDown={() => setQualityReport(null)}><div className="quality-dialog" onMouseDown={(event) => event.stopPropagation()}><div className="quality-heading"><span className={qualityReport.warnings.length ? 'warning' : 'passed'}>{qualityReport.warnings.length ? <TriangleAlert size={21} /> : <ShieldCheck size={21} />}</span><div><h2>{qualityReport.warnings.length ? `พบ ${qualityReport.warnings.length} จุดที่ควรตรวจ` : 'QUALITY CHECK PASSED'}</h2><p>Anchor · Click · Clipping · Beat Drift</p></div><IconButton title="ปิด" onClick={() => setQualityReport(null)}><X size={16} /></IconButton></div>{qualityReport.warnings.length ? <div className="quality-list">{qualityReport.warnings.map((warning, index) => <button key={`${warning.type}-${warning.trackId}-${index}`} onClick={() => { setSelectedId(warning.trackId); setQualityReport(null); }}><TriangleAlert size={15} /><span><b>{warning.title}</b><small>{warning.detail}</small></span></button>)}</div> : <div className="quality-passed"><ShieldCheck size={31} /><b>ไม่พบจุดเสี่ยงในไฟล์และช่วงซ้อน</b><span>พร้อม Export ตาม Anchor ปัจจุบัน</span></div>}<div className="dialog-actions"><button className="secondary-action" onClick={() => setQualityReport(null)}>ปิด</button>{qualityReport.pendingExport && <button className="primary-action" onClick={() => { setQualityReport(null); exportMix(true); }}>Export ต่อ</button>}</div></div></div>}
     {showShortcuts && <div className="modal-backdrop shortcut-backdrop" onMouseDown={() => setShowShortcuts(false)}><div className="shortcut-dialog" onMouseDown={(event) => event.stopPropagation()}><div className="shortcut-heading"><span><Keyboard size={19} /></span><div><h2>COMMAND KEYS</h2><p>R9CLUB AUTOMIX</p></div><IconButton title="ปิด" onClick={() => setShowShortcuts(false)}><X size={16} /></IconButton></div><div className="shortcut-grid">{shortcuts.map(([command, keys]) => <div className="shortcut-row" key={command}><span>{command}</span><kbd>{keys}</kbd></div>)}</div></div></div>}
     {showAudioPanel && <div className="modal-backdrop audio-backdrop" onMouseDown={() => setShowAudioPanel(false)}><section className="audio-dialog" onMouseDown={(event) => event.stopPropagation()}>
       <header className="audio-heading"><span><Headphones size={20} /></span><div><h2>AUDIO ENGINE</h2><p>Playback device, exclusive access and latency</p></div><IconButton title="ปิด" onClick={() => setShowAudioPanel(false)}><X size={16} /></IconButton></header>
