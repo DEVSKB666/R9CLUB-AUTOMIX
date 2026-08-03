@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectAnchorsFromEnvelope, detectBeatDriftFromEnvelope, templateEntryAnchor } from './audio-analysis';
+import { detectAnchorsFromEnvelope, detectBeatDriftFromEnvelope, resolveAnchorGridBpm, templateEntryAnchor } from './audio-analysis';
 
 describe('smart anchor detector', () => {
   it('finds a prepared fade-in and a sustained silent tail', () => {
@@ -31,6 +31,14 @@ describe('smart anchor detector', () => {
     expect(templateEntryAnchor(136, 1)).toBeCloseTo(1.764705882, 8);
     expect(templateEntryAnchor(136, 2)).toBeCloseTo(3.529411765, 8);
     expect(templateEntryAnchor(136, 4, 3)).toBe(3);
+  });
+
+  it('keeps prepared anchors on the project grid instead of a detected per-track tempo', () => {
+    const projectBpm = resolveAnchorGridBpm(136);
+    const detectedTrackBpm = 128;
+    expect(projectBpm).toBe(136);
+    expect(templateEntryAnchor(projectBpm, 1)).toBeCloseTo(1.764705882, 8);
+    expect(templateEntryAnchor(projectBpm, 1)).not.toBeCloseTo(templateEntryAnchor(detectedTrackBpm, 1), 3);
   });
 
   it('measures a strong onset that drifts away from the prepared beat', () => {

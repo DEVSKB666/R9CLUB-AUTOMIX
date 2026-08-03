@@ -5,7 +5,7 @@ import {
   Redo2, RefreshCw, Repeat2, RotateCcw, Save, Scissors, ShieldCheck, SkipBack, SkipForward,
   Trash2, TriangleAlert, Undo2, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
-import { detectAnchorsFromEnvelope, detectBeatDriftFromEnvelope, templateEntryAnchor } from './audio-analysis';
+import { detectAnchorsFromEnvelope, detectBeatDriftFromEnvelope, resolveAnchorGridBpm, templateEntryAnchor } from './audio-analysis';
 import { buildQualityWarnings } from './audio-quality';
 import { analyzeMusicBuffer } from './music-analysis-client';
 import { musicTheory } from './music-analysis';
@@ -452,9 +452,9 @@ function App() {
       let musicAnalysis = null; let musicAnalysisError = '';
       try { musicAnalysis = preserveManualMusicAnalysis(await analyzeMusicBuffer(buffer), track.musicAnalysis); }
       catch (error) { musicAnalysisError = error.message || 'วิเคราะห์ BPM/KEY ไม่สำเร็จ'; }
-      const detectedBpm = musicAnalysis?.bpmConfidence >= .45 ? musicAnalysis.bpm : analysisBpm;
-      const expectedEntry = templateEntryAnchor(detectedBpm, analysisIntroBars, buffer.duration);
-      const anchors = detectAnchors(buffer, detectedBpm, expectedEntry);
+      const anchorBpm = resolveAnchorGridBpm(analysisBpm);
+      const expectedEntry = templateEntryAnchor(anchorBpm, analysisIntroBars, buffer.duration);
+      const anchors = detectAnchors(buffer, anchorBpm, expectedEntry);
       anchors.entryAnchor = expectedEntry;
       anchors.entryConfidence = 1;
       await context.close();
@@ -479,9 +479,8 @@ function App() {
     const buffer = buffersRef.current.get(track.id); if (!buffer || musicAnalyzingId) return;
     setMusicAnalyzingId(track.id); setMessage(`กำลังวิเคราะห์ BPM · KEY · CHORD ของ ${track.name}`);
     try {
-      const musicAnalysis = preserveManualMusicAnalysis(await analyzeMusicBuffer(buffer), track.musicAnalysis); const detectedBpm = musicAnalysis.bpmConfidence >= .45 ? musicAnalysis.bpm : bpm;
-      const expectedEntry = templateEntryAnchor(detectedBpm, introBars, buffer.duration); const anchors = detectAnchors(buffer, detectedBpm, expectedEntry);
-      setTracksSynced((current) => alignTracks(current.map((item) => item.id === track.id ? { ...item, musicAnalysis, musicAnalysisError: '', ...anchors, entryAnchor: expectedEntry, entryConfidence: 1 } : item)));
+      const musicAnalysis = preserveManualMusicAnalysis(await analyzeMusicBuffer(buffer), track.musicAnalysis);
+      setTracksSynced((current) => current.map((item) => item.id === track.id ? { ...item, musicAnalysis, musicAnalysisError: '' } : item));
       setMessage(`วิเคราะห์แล้ว: ${musicAnalysis.bpm.toFixed(2)} BPM · ${musicAnalysis.keyConfidence >= .3 ? `${musicAnalysis.keyLabel} (${musicAnalysis.camelot})` : 'KEY ต้องยืนยัน'} · ${musicAnalysis.chords.length} ช่วงคอร์ด`);
     } catch (error) { setTracksSynced((current) => current.map((item) => item.id === track.id ? { ...item, musicAnalysisError: error.message } : item)); setMessage(`วิเคราะห์เพลงไม่สำเร็จ: ${error.message}`); }
     finally { setMusicAnalyzingId(null); }
@@ -514,9 +513,9 @@ function App() {
       setTracksSynced((current) => alignTracks(current.map((track) => {
         const buffer = buffersRef.current.get(track.id);
         if (!buffer) return track;
-        const trackBpm = track.musicAnalysis?.bpmConfidence >= .45 ? track.musicAnalysis.bpm : bpm;
-        const expectedEntry = templateEntryAnchor(trackBpm, introBars, buffer.duration);
-        const anchors = detectAnchors(buffer, trackBpm, expectedEntry);
+        const anchorBpm = resolveAnchorGridBpm(bpm);
+        const expectedEntry = templateEntryAnchor(anchorBpm, introBars, buffer.duration);
+        const anchors = detectAnchors(buffer, anchorBpm, expectedEntry);
         return { ...track, ...anchors, entryAnchor: expectedEntry, entryConfidence: 1 };
       })));
       setMessage('ตรวจ OUT ใหม่โดยเก็บเสียงหัวและท้ายไฟล์ไว้ครบแล้ว');

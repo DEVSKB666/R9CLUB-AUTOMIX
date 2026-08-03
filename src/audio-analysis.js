@@ -108,6 +108,13 @@ export function templateEntryAnchor(bpm, bars, duration = Infinity) {
   return Math.min(duration, seconds);
 }
 
+// Prepared transitions share the project grid. Music-DNA tempo is metadata and
+// must never move an existing IN/OUT arrangement when it is re-analysed.
+export function resolveAnchorGridBpm(projectBpm) {
+  const value = Number(projectBpm);
+  return Number.isFinite(value) && value > 0 ? value : 120;
+}
+
 export function detectBeatDriftFromEnvelope(envelope, frameSeconds, bpm, anchorSeconds) {
   if (!envelope.length || !Number.isFinite(anchorSeconds)) return { beatDriftMs: 0, beatConfidence: 0 };
   const beatSeconds = 60 / Math.max(1, bpm);
