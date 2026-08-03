@@ -258,7 +258,7 @@ function App() {
   const [showAudioPanel, setShowAudioPanel] = useState(false); const [audioDevices, setAudioDevices] = useState([]); const [audioDeviceId, setAudioDeviceId] = useState(() => localStorage.getItem('r9club-audio-device') || 'default'); const [latencyMode, setLatencyMode] = useState(() => localStorage.getItem('r9club-latency-mode') || 'playback');
   const [audioBackend, setAudioBackend] = useState(() => api && desktopPlatform === 'win32' ? localStorage.getItem('r9club-audio-backend') || 'shared' : 'shared'); const [audioCapabilities, setAudioCapabilities] = useState(null); const [probingAudio, setProbingAudio] = useState(false); const [asioDriver, setAsioDriver] = useState(() => localStorage.getItem('r9club-asio-driver') || '');
   const [audioStats, setAudioStats] = useState({ state: 'idle', sampleRate: 0, baseLatency: null, outputLatency: null, interruptions: 0, sinkSupported: false, deviceLabel: 'System Default' });
-  const [musicAnalyzingId, setMusicAnalyzingId] = useState(null);
+  const [musicAnalyzingId, setMusicAnalyzingId] = useState(null); const [chordEditor, setChordEditor] = useState(null);
   const timelineRef = useRef(null); const panRef = useRef(null); const buffersRef = useRef(new Map()); const contextRef = useRef(null); const sourcesRef = useRef([]); const animationRef = useRef(null); const clockRef = useRef(null); const loopRangeRef = useRef(null);
   const tracksRef = useRef(tracks); const undoRef = useRef([]); const redoRef = useRef([]); const renderStartedRef = useRef(null); const webRenderTimerRef = useRef(null); const playingRef = useRef(false); const nativePlaybackRef = useRef(false);
 
@@ -497,11 +497,15 @@ function App() {
   };
   const editDetectedChord = (index) => {
     if (!selected || !selectedMusic?.chords?.[index]) return; const current = selectedMusic.chords[index];
-    const entered = window.prompt('แก้คอร์ด (เช่น C, F#m, G7, Bbmaj7, Asus4)', current.label); if (entered === null) return;
-    const label = normalizeChordName(entered);
+    setChordEditor({ trackId: selected.id, index, previousLabel: current.label, value: current.label });
+  };
+  const saveDetectedChord = () => {
+    if (!chordEditor) return; const track = tracksRef.current.find((item) => item.id === chordEditor.trackId); const musicAnalysis = track?.musicAnalysis;
+    if (!musicAnalysis?.chords?.[chordEditor.index]) { setChordEditor(null); return; }
+    const label = normalizeChordName(chordEditor.value);
     if (!label) { setMessage('รูปแบบคอร์ดไม่ถูกต้อง · รองรับ Major, Minor, 7, maj7, m7, sus2, sus4 และ dim'); return; }
-    const chords = selectedMusic.chords.map((chord, chordIndex) => chordIndex === index ? { ...chord, label, confidence: 1, source: 'manual' } : chord);
-    updateTrack(selected.id, { musicAnalysis: { ...selectedMusic, chords } }); setMessage(`ยืนยันคอร์ด ${current.label} → ${label} แล้ว`);
+    const chords = musicAnalysis.chords.map((chord, chordIndex) => chordIndex === chordEditor.index ? { ...chord, label, confidence: 1, source: 'manual' } : chord);
+    updateTrack(chordEditor.trackId, { musicAnalysis: { ...musicAnalysis, chords } }); setMessage(`ยืนยันคอร์ด ${chordEditor.previousLabel} → ${label} แล้ว`); setChordEditor(null);
   };
   const analyzeAll = async () => {
     if (!tracks.length) return; setAnalyzing(true);
@@ -716,6 +720,12 @@ function App() {
       </div>
       <div className="dialog-actions"><button className="secondary-action" onClick={() => setShowExportSettings(false)}>ยกเลิก</button><button className="primary-action" onClick={() => exportMix()}><Download size={14} /> เลือกตำแหน่งบันทึก</button></div>
     </section></div>}
+    {chordEditor && <div className="modal-backdrop chord-edit-backdrop" onMouseDown={() => setChordEditor(null)}><form className="chord-edit-dialog" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); saveDetectedChord(); }}>
+      <header><span><Music2 size={19} /></span><div><h2>ยืนยันคอร์ด</h2><p>แก้ผลวิเคราะห์และบันทึกเป็นค่าที่ตรวจสอบแล้ว</p></div><IconButton type="button" title="ปิด" onClick={() => setChordEditor(null)}><X size={16} /></IconButton></header>
+      <label><span>CHORD</span><input autoFocus value={chordEditor.value} onChange={(event) => setChordEditor((current) => ({ ...current, value: event.target.value }))} placeholder="เช่น C, F#m, G7, Bbmaj7, Asus4" /></label>
+      <small>รองรับ Major, Minor, 7, maj7, m7, sus2, sus4 และ dim</small>
+      <div className="dialog-actions"><button type="button" className="secondary-action" onClick={() => setChordEditor(null)}>ยกเลิก</button><button type="submit" className="primary-action"><Check size={14} /> ยืนยันคอร์ด</button></div>
+    </form></div>}
     {recoveryProject && <div className="modal-backdrop recovery-backdrop"><div className="recovery-dialog"><div className="dialog-symbol"><History size={23} /></div><div><h2>พบงานบันทึกอัตโนมัติ</h2><p>{recoveryProject.tracks?.length || 0} เพลง · {recoveryProject.savedAt ? new Date(recoveryProject.savedAt).toLocaleString('th-TH') : 'จากการใช้งานครั้งก่อน'}</p></div><div className="dialog-actions"><button className="secondary-action" onClick={discardAutosave}>ไม่ใช้ไฟล์นี้</button><button className="primary-action" onClick={restoreAutosave}><History size={15} /> กู้คืนงาน</button></div></div></div>}
     {qualityReport && <div className="modal-backdrop quality-backdrop" onMouseDown={() => setQualityReport(null)}><div className="quality-dialog" onMouseDown={(event) => event.stopPropagation()}><div className="quality-heading"><span className={qualityReport.warnings.length ? 'warning' : 'passed'}>{qualityReport.warnings.length ? <TriangleAlert size={21} /> : <ShieldCheck size={21} />}</span><div><h2>{qualityReport.warnings.length ? `พบ ${qualityReport.warnings.length} จุดที่ควรตรวจ` : 'QUALITY CHECK PASSED'}</h2><p>Anchor · Click · Clipping · Beat Drift</p></div><IconButton title="ปิด" onClick={() => setQualityReport(null)}><X size={16} /></IconButton></div>{qualityReport.warnings.length ? <div className="quality-list">{qualityReport.warnings.map((warning, index) => <button key={`${warning.type}-${warning.trackId}-${index}`} onClick={() => { setSelectedId(warning.trackId); setQualityReport(null); }}><TriangleAlert size={15} /><span><b>{warning.title}</b><small>{warning.detail}</small></span></button>)}</div> : <div className="quality-passed"><ShieldCheck size={31} /><b>ไม่พบจุดเสี่ยงในไฟล์และช่วงซ้อน</b><span>พร้อม Export ตาม Anchor ปัจจุบัน</span></div>}<div className="dialog-actions"><button className="secondary-action" onClick={() => setQualityReport(null)}>ปิด</button>{qualityReport.pendingExport && <button className="primary-action" onClick={() => { setQualityReport(null); exportMix(true); }}>Export ต่อ</button>}</div></div></div>}
     {showShortcuts && <div className="modal-backdrop shortcut-backdrop" onMouseDown={() => setShowShortcuts(false)}><div className="shortcut-dialog" onMouseDown={(event) => event.stopPropagation()}><div className="shortcut-heading"><span><Keyboard size={19} /></span><div><h2>COMMAND KEYS</h2><p>R9CLUB AUTOMIX</p></div><IconButton title="ปิด" onClick={() => setShowShortcuts(false)}><X size={16} /></IconButton></div><div className="shortcut-grid">{shortcuts.map(([command, keys]) => <div className="shortcut-row" key={command}><span>{command}</span><kbd>{keys}</kbd></div>)}</div></div></div>}

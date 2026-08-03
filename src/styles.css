@@ -259,6 +259,16 @@ button:disabled { opacity: .38; cursor: default; }
 .music-dna-pending b { color: #b9c3c6; font-size: 8px; }
 .music-dna-pending small { color: #667176; font-size: 7px; }
 .music-dna-section .secondary-wide { height: 31px; margin-top: 0; font-size: 8px; }
+.chord-edit-dialog { width: 410px; display: grid; gap: 13px; padding: 17px; border: 1px solid #38484d; border-radius: 6px; background: #111719; box-shadow: 0 24px 80px rgba(0,0,0,.72); }
+.chord-edit-dialog header { display: flex; align-items: center; gap: 10px; }
+.chord-edit-dialog header > span { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #286b77; border-radius: 4px; color: #60d8e7; background: #10272c; }
+.chord-edit-dialog header div { flex: 1; }
+.chord-edit-dialog h2 { margin: 0; color: #edf4f5; font-size: 13px; }
+.chord-edit-dialog p { margin: 2px 0 0; color: #718086; font-size: 8px; }
+.chord-edit-dialog label { display: grid; gap: 5px; color: #738187; font-size: 7px; }
+.chord-edit-dialog input { height: 38px; padding: 0 11px; border: 1px solid #35484e; border-radius: 4px; outline: 0; color: #edf6f7; background: #090e10; font-family: 'Prompt', sans-serif; font-size: 13px; }
+.chord-edit-dialog input:focus { border-color: #36a9b9; box-shadow: 0 0 0 2px rgba(54,169,185,.12); }
+.chord-edit-dialog > small { color: #66757a; font-size: 7px; }
 .anchor-marker { width: 1px; position: absolute; top: 25px; bottom: 0; z-index: 4; pointer-events: none; background: rgba(239,169,74,.95); }
 .anchor-marker b { position: absolute; top: 2px; left: 3px; padding: 1px 3px; border-radius: 2px; color: #17120a; background: var(--amber); font-size: 6px; }
 .anchor-out { background: rgba(84,199,232,.95); }
